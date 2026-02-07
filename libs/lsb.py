@@ -21,14 +21,34 @@ class AudioSteganography(StegoMethod):
         self.lsb_position = lsb_position
         self.end_marker = "*^*^*"  # Маркер конца сообщения
 
-    def _check_capacity(self, audio_size: int, message_size: int) -> bool:
-        """
-        Проверка, помещается ли сообщение в аудиофайл
-        """
-        # Каждый байт сообщения требует 8 байт аудио (по 1 биту на каждый)
-        required_bytes = message_size * 8
-        return audio_size >= required_bytes
+    def _int_to_bits(self, value: int, bits: int = 32):
+        return [(value >> i) & 1 for i in range(bits-1, -1, -1)]
 
+
+    def _bits_to_int(self, bits):
+        value = 0
+        for b in bits:
+            value = (value << 1) | b
+        return value
+
+
+    def _bytes_to_bits(self, data: bytes):
+        bits = []
+        for byte in data:
+            for i in range(7, -1, -1):
+                bits.append((byte >> i) & 1)
+        return bits
+
+
+    def _bits_to_bytes(self, bits):
+        out = bytearray()
+        for i in range(0, len(bits), 8):
+            byte = 0
+            for b in bits[i:i+8]:
+                byte = (byte << 1) | b
+            out.append(byte)
+        return bytes(out)
+    
     def _message_to_bits(self, message: str) -> list:
         """
         Преобразование сообщения в список битов
@@ -74,30 +94,29 @@ class AudioSteganography(StegoMethod):
         return message
 
 
-    def _embed_bit_min_error(sample, bit, k):
-        """
-        sample: оригинальный int16 сэмпл
-        bit: 0 или 1
-        k: позиция бита (например 5 для 6-го)
-        """
-        original = sample
+    def _embed_bit_min_error(self, sample, bit, k):
+        original = int(sample)
 
-        # Устанавливаем целевой бит
-        base = (sample & ~(1 << k)) | (bit << k)
+        u = original & 0xFFFF
+
+        base = (u & ~(1 << k)) | ((bit & 1) << k)
 
         best = base
-        min_error = abs(base - original)
+        min_error = abs(np.int32(self._uint16_to_int16(base)) - np.int32(original))
 
-        # Перебираем варианты младших битов
         for low_bits in range(1 << k):
             candidate = (base & ~((1 << k) - 1)) | low_bits
-            error = abs(candidate - original)
-
+            error = abs(np.int32(self._uint16_to_int16(candidate)) - np.int32(original))
             if error < min_error:
                 min_error = error
                 best = candidate
 
-        return best
+        return np.int16(self._uint16_to_int16(best))
+
+    def _uint16_to_int16(self,x):
+        return x - 0x10000 if x >= 0x8000 else x
+
+
 
 
     def encode(self, input_file: str, output_file: str, message: str) -> Tuple[bool, str]:
@@ -121,7 +140,9 @@ class AudioSteganography(StegoMethod):
             samples = np.frombuffer(frames, dtype=np.int16).copy()
         
             # 2. Проверяем вместимость
-            message_bits = self._message_to_bits(message)
+            message_bytes = message.encode("utf-8")
+            length_bits = self._int_to_bits(len(message_bytes), 32)
+            message_bits = length_bits + self._bytes_to_bits(message_bytes)
             
             SILENCE_THRESHOLD = 500
             bit_index = 0
@@ -135,7 +156,7 @@ class AudioSteganography(StegoMethod):
                 if bit_index >= len(message_bits):
                     break
 
-                if abs(samples[i]) < SILENCE_THRESHOLD:
+                if np.abs(samples[i].astype(np.int32)) < SILENCE_THRESHOLD:
                     continue
 
                 samples[i] = self._embed_bit_min_error(
@@ -146,7 +167,8 @@ class AudioSteganography(StegoMethod):
 
                 bit_index += 1
 
-
+            if bit_index < len(message_bits):
+                raise ValueError("Не удалось встроить все биты сообщения")
             
             new_frames = samples.tobytes()
 
@@ -155,7 +177,7 @@ class AudioSteganography(StegoMethod):
                 out.writeframes(new_frames)
             
             # 5. Рассчитываем статистику
-            capacity = len(samples) // 8  # Максимальное количество символов
+            capacity = usable_samples // 8  # Максимальное количество символов
             used = len(message)
             usage_percent = (used / capacity) * 100
             
@@ -170,53 +192,60 @@ class AudioSteganography(StegoMethod):
         except Exception as e:
             return False, f"Ошибка при кодировании: {str(e)}"
     
-    def decode(self, input_file: str) -> Tuple[bool, str, str]:
-        """
-        Декодирование сообщения из аудиофайла
-        
-        Args:
-            input_file: Путь к аудиофайлу со скрытым сообщением
-            
-        Returns:
-            Tuple[bool, str, str]: (успех, извлеченное сообщение, информация)
-        """
+    def decode(self, input_file: str) -> Tuple[bool, str]:
         try:
-            # 1. Открываем аудиофайл
             with wave.open(input_file, 'rb') as song:
                 n_frames = song.getnframes()
                 frames = song.readframes(n_frames)
-                audio_data = bytearray(frames)
-            
-            # 2. Извлекаем биты сообщения
+
+            samples = np.frombuffer(frames, dtype=np.int16)
+
+            SILENCE_THRESHOLD = 500
             extracted_bits = []
-            
-            for i in range(len(audio_data)):
-                # Извлекаем целевой бит
-                bit = (audio_data[i] >> self.lsb_position) & 1
+
+            # 1) Сначала извлекаем 32 бита длины
+            for i in range(len(samples)):
+                if abs(int(samples[i])) < SILENCE_THRESHOLD:
+                    continue
+
+                bit = (int(samples[i]) >> self.lsb_position) & 1
                 extracted_bits.append(bit)
-                
-                # Проверяем, не нашли ли мы маркер конца
-                if len(extracted_bits) >= 8 * 5:  # Минимальная длина для маркера
-                    temp_message = self._bits_to_message(extracted_bits)
-                    if self.end_marker in temp_message:
-                        break
-            
-            # 3. Преобразуем биты в сообщение
-            message = self._bits_to_message(extracted_bits)
-            
-            if not message:
-                return False, "", "Сообщение не найдено или файл поврежден"
-            
-            # 4. Рассчитываем статистику
-            extracted_bits_count = len(message) * 8
-            total_bits_read = len(extracted_bits)
-            
-            return True, message, (
-                f"Сообщение успешно извлечено!\n"
-                f"Длина сообщения: {len(message)} символов\n"
-                f"Извлечено бит: {extracted_bits_count}\n"
-                f"Проанализировано байт аудио: {total_bits_read // 8}"
-            )
-            
+
+                if len(extracted_bits) == 32:
+                    break
+
+            if len(extracted_bits) < 32:
+                return False, "Не удалось извлечь длину сообщения"
+
+            msg_length = self._bits_to_int(extracted_bits)  # длина в байтах
+            total_bits_needed = msg_length * 8
+
+            # 2) Теперь извлекаем сообщение
+            message_bits = []
+            count = 0
+
+            for j in range(i + 1, len(samples)):
+                if abs(int(samples[j])) < SILENCE_THRESHOLD:
+                    continue
+
+                bit = (int(samples[j]) >> self.lsb_position) & 1
+                message_bits.append(bit)
+                count += 1
+
+                if count == total_bits_needed:
+                    break
+
+            if len(message_bits) < total_bits_needed:
+                return False, "Не удалось извлечь все биты сообщения"
+
+            message_bytes = self._bits_to_bytes(message_bits)
+
+            try:
+                message = message_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                return False, "Сообщение извлечено, но не удалось декодировать UTF-8"
+
+            return True, message
+
         except Exception as e:
-            return False, "", f"Ошибка при декодировании: {str(e)}"
+            return False, f"Ошибка при декодировании: {str(e)}"
