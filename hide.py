@@ -22,12 +22,12 @@ def main():
     encode_parser = subparsers.add_parser("encode")
     encode_parser.add_argument("--infile", required=True)
     encode_parser.add_argument("--outfile", required=True)
-    encode_parser.add_argument("--method", required=True)
+    encode_parser.add_argument("--method", choices=["lsb", "phase"], required=True)
     encode_parser.add_argument("--msg", required=True)
 
     decode_parser = subparsers.add_parser("decode")
     decode_parser.add_argument("--infile", required=True)
-    encode_parser.add_argument("--method", required=True)
+    encode_parser.add_argument("--method", choices=["lsb", "phase"], required=True)
 
     args = parser.parse_args()
 
