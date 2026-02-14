@@ -1,54 +1,136 @@
 from libs.abstract import StegoMethod
-
 import numpy as np
-import scipy.io.wavfile as wavfile
+from scipy.io import wavfile
 
-class PhaseCoding(StegoMethod):
 
-    def encode(self,input_filename, output_filename, message):
-        rate, audio = wavfile.read(input_filename)
+class PhaseCodingStego(StegoMethod):
+    def __init__(self, seg_len=8192, delta=np.pi/8):
+        """
+        seg_len: длина FFT сегмента (должна быть степенью 2)
+        delta: фазовый сдвиг
+        """
+        self.seg_len = seg_len
+        self.delta = delta
+
+    def _int_to_bits(self, value, nbits=32):
+        return np.array([(value >> i) & 1 for i in range(nbits-1, -1, -1)], dtype=np.uint8)
+
+    def _bits_to_int(self, bits):
+        val = 0
+        for b in bits:
+            val = (val << 1) | int(b)
+        return val
+
+    def _bytes_to_bits(self, data: bytes):
+        bits = []
+        for byte in data:
+            bits.extend([(byte >> i) & 1 for i in range(7, -1, -1)])
+        return np.array(bits, dtype=np.uint8)
+
+    def _bits_to_bytes(self, bits):
+        out = bytearray()
+        for i in range(0, len(bits), 8):
+            byte = 0
+            for b in bits[i:i+8]:
+                byte = (byte << 1) | int(b)
+            out.append(byte)
+        return bytes(out)
+
+    
+    def encode(self, input_file, output_file, message: str):
+
+        rate, audio = wavfile.read(input_file)
+
         if len(audio.shape) > 1:
-            audio = audio[:, 0]  # Convert to mono by selecting the first channel
-        audio = audio.copy()
-        # Calculate message length in bits
-        msg_len = 8 * len(message)
-        # Calculate segment length, ensuring it's a power of 2
-        seg_len = int(2 * 2**np.ceil(np.log2(2*msg_len)))
-        # Calculate the number of segments needed
-        seg_num = int(np.ceil(len(audio) / seg_len))
+            audio = audio[:, 0]
 
-        # Resize the audio array to fit the number of segments
-        audio.resize(seg_num * seg_len, refcheck=False)
+        audio = audio.astype(np.int16)
+        original_len = len(audio)
 
-        # Convert message to binary representation
-        msg_bin = np.ravel([[int(y) for y in format(ord(x), '08b')] for x in message])
-        # Convert binary to phase shifts (-pi/8 for 1, pi/8 for 0)
-        msg_pi = msg_bin.copy()
-        msg_pi[msg_pi == 0] = -1
-        msg_pi = msg_pi * -np.pi / 2 # Use smaller phase to improve audio quality 1/8 may cause low BER, so change back to 1/2
+        msg_bytes = message.encode("utf-8")
+        length_bits = self._int_to_bits(len(msg_bytes), 32)
+        msg_bits = self._bytes_to_bits(msg_bytes)
 
-        # Reshape audio into segments and perform FFT
-        segs = audio.reshape((seg_num, seg_len))
-        segs = np.fft.fft(segs)
-        M = np.abs(segs)  # Magnitude
-        P = np.angle(segs)  # Phase
+        payload_bits = np.concatenate([length_bits, msg_bits])
+        payload_len = len(payload_bits)
 
-        seg_mid = seg_len // 2
+        max_bits = self.seg_len // 2 - 1
+        if payload_len > max_bits:
+            raise ValueError(f"Message too long. Max bits={max_bits}, needed={payload_len}")
 
-        # Embed message into the phase of the middle frequencies
-        for i in range(seg_num):
-            start = i * len(msg_pi) // seg_num
-            end = (i + 1) * len(msg_pi) // seg_num
-            P[i, seg_mid - (end - start):seg_mid] = msg_pi[start:end]
-            P[i, seg_mid + 1:seg_mid + 1 + (end - start)] = -msg_pi[start:end][::-1]
+        seg_num = int(np.ceil(len(audio) / self.seg_len))
+        pad = seg_num * self.seg_len - len(audio)
+        if pad > 0:
+            audio = np.pad(audio, (0, pad), mode="constant")
 
-        # Reconstruct the audio with modified phase
-        segs = M * np.exp(1j * P)
-        audio = np.fft.ifft(segs).real.ravel().astype(np.int16)
+        segs = audio.reshape((seg_num, self.seg_len)).astype(np.float64)
 
-        # Write the modified audio to the output file
-        wavfile.write(output_filename, rate, audio)
+        fft_segs = np.fft.fft(segs, axis=1)
 
-    def decode():
-        pass
+        M = np.abs(fft_segs)
+        P = np.angle(fft_segs)
+
+        phase_diff = P[1:] - P[:-1]
+
+        new_phase = P[0].copy()
+
+        for i in range(payload_len):
+            k = i + 1  
+            new_phase[k] = self.delta if payload_bits[i] == 1 else -self.delta
+            new_phase[-k] = -new_phase[k]  
+
+        P[0] = new_phase
+
+        for i in range(1, seg_num):
+            P[i] = P[i-1] + phase_diff[i-1]
+
+        new_fft = M * np.exp(1j * P)
+        new_segs = np.fft.ifft(new_fft, axis=1).real
+
+        stego = new_segs.ravel()
+        stego = np.clip(stego, -32768, 32767).astype(np.int16)
+
+        stego = stego[:original_len]
+
+        wavfile.write(output_file, rate, stego)
+
+        return True, f"Phase coding embedded {len(msg_bytes)} bytes ({payload_len} bits)."
+
+    def decode(self, input_file):
+        rate, audio = wavfile.read(input_file)
+
+        if len(audio.shape) > 1:
+            audio = audio[:, 0]
+
+        audio = audio.astype(np.int16)
+
+        # pad audio
+        seg_num = int(np.ceil(len(audio) / self.seg_len))
+        pad = seg_num * self.seg_len - len(audio)
+        if pad > 0:
+            audio = np.pad(audio, (0, pad), mode="constant")
+
+        segs = audio.reshape((seg_num, self.seg_len)).astype(np.float64)
+
+        fft_segs = np.fft.fft(segs, axis=1)
+        P = np.angle(fft_segs)
+
+        ref_phase = P[0]
+
+        extracted_bits = []
+
+        for i in range(32):
+            k = i + 1
+            extracted_bits.append(1 if ref_phase[k] > 0 else 0)
+
+        msg_len_bytes = self._bits_to_int(extracted_bits)
+
+        msg_bits = []
+        for i in range(msg_len_bytes * 8):
+            k = 32 + i + 1
+            msg_bits.append(1 if ref_phase[k] > 0 else 0)
+
+        msg_bytes = self._bits_to_bytes(msg_bits)
+
+        return True, msg_bytes.decode("utf-8", errors="ignore")
 

@@ -5,7 +5,7 @@ import numpy as np
 from libs.abstract import StegoMethod
 
 
-class AudioSteganography(StegoMethod):
+class LSBCodingStego(StegoMethod):
     """
     Класс для стеганографии в WAV-файлах с использованием LSB-метода
     """
