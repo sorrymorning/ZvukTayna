@@ -27,8 +27,8 @@ def main():
 
     decode_parser = subparsers.add_parser("decode")
     decode_parser.add_argument("--infile", required=True)
-    encode_parser.add_argument("--method", choices=["lsb", "phase"], required=True)
-
+    decode_parser.add_argument("--len", type=int, help="Required for phase method")
+    decode_parser.add_argument("--method", choices=["lsb", "phase"], required=True)
     args = parser.parse_args()
 
     if args.command == "encode":
@@ -37,8 +37,17 @@ def main():
         print(info)
 
     elif args.command == "decode":
+        # Проверяем, что для phase метода указан len
+        if args.method == "phase" and args.len is None:
+            parser.error("--len is required for phase decoding method")
+        
         method = methods[args.method]()
-        result,info = method.decode(args.infile)
+        
+        if args.method == "phase":
+            result, info = method.decode(args.infile, args.len)
+        else:
+            result, info = method.decode(args.infile)
+        
         print(info)
 
 if __name__ == "__main__":
