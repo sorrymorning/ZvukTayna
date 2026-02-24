@@ -4,13 +4,17 @@ import numpy as np
 from typing import Tuple, Optional
 from libs.lsb import LSBCodingStego
 from libs.phase import PhaseCodingStego
+from libs.dsss import Dsss
+from libs.echo import EchoCodingStego
 
 
 import argparse
 
 methods = {
     "lsb": LSBCodingStego,
-    "phase": PhaseCodingStego
+    "phase": PhaseCodingStego,
+    "dsss": Dsss,
+    "echo": EchoCodingStego
 }
 
 
@@ -22,13 +26,13 @@ def main():
     encode_parser = subparsers.add_parser("encode")
     encode_parser.add_argument("--infile", required=True)
     encode_parser.add_argument("--outfile", required=True)
-    encode_parser.add_argument("--method", choices=["lsb", "phase"], required=True)
+    encode_parser.add_argument("--method", choices=["lsb", "phase","dsss","echo"], required=True)
     encode_parser.add_argument("--msg", required=True)
 
     decode_parser = subparsers.add_parser("decode")
     decode_parser.add_argument("--infile", required=True)
     decode_parser.add_argument("--len", type=int, help="Required for phase method")
-    decode_parser.add_argument("--method", choices=["lsb", "phase"], required=True)
+    decode_parser.add_argument("--method", choices=["lsb", "phase","dsss"], required=True)
     args = parser.parse_args()
 
     if args.command == "encode":

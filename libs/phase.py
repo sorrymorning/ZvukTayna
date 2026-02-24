@@ -15,7 +15,8 @@ class PhaseCodingStego(StegoMethod):
         self.seg_len = seg_len
         self.delta = delta
 
-    def calculate_max_message_length(input_filename):
+
+    def _calculate_max_message_length(input_filename):
         rate, audio = wavfile.read(input_filename)
         if len(audio.shape) > 1:
             audio = audio[:, 0] 
@@ -33,7 +34,8 @@ class PhaseCodingStego(StegoMethod):
         return max_bytes
 
     def encode(self,input_filename, output_filename, message):
-
+        if len(message) >= PhaseCodingStego._calculate_max_message_length(input_filename):
+            raise ValueError("ЕПТА капец")
         rate, audio = wavfile.read(input_filename)
         if len(audio.shape) > 1:
             audio = audio[:, 0]  
