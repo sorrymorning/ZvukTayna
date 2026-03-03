@@ -42,12 +42,12 @@ def main():
 
     elif args.command == "decode":
         # Проверяем, что для phase метода указан len
-        if args.method == "phase" and args.len is None:
+        if args.method in ["phase","dsss"] and args.len is None:
             parser.error("--len is required for phase decoding method")
         
         method = methods[args.method]()
         
-        if args.method == "phase":
+        if args.method in ["phase","dsss"]:
             result, info = method.decode(args.infile, args.len)
         else:
             result, info = method.decode(args.infile)
