@@ -5,7 +5,7 @@ from typing import Tuple, Optional
 from libs.lsb import LSBCodingStego
 from libs.phase import PhaseCodingStego
 from libs.dsss import Dsss
-from libs.echo import EchoCodingStego
+from libs.echo import EchoStego
 
 
 import argparse
@@ -14,7 +14,7 @@ methods = {
     "lsb": LSBCodingStego,
     "phase": PhaseCodingStego,
     "dsss": Dsss,
-    "echo": EchoCodingStego
+    "echo": EchoStego
 }
 
 

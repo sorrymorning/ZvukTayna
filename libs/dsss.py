@@ -1,40 +1,9 @@
 from libs.abstract import StegoMethod
 import numpy as np
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
-import base64
-import os
-from cryptography.fernet import Fernet
 from scipy.io import wavfile
-import hashlib
-
-SYNC_MARKER = np.array([1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 0])  # 16 бит
-END_MARKER = np.array([0, 0, 0, 0, 1, 1, 1, 1])  # 8 бит конца
 
 
 class Dsss(StegoMethod):
-
-
-    def _derive_key(password: str, salt: bytes) -> bytes:
-        # Превращаем пароль в 32-байтный ключ через 100,000 итераций хеширования.
-        # Это делает перебор паролей (Brute-force) мучительно долгим.
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=100000, 
-        )
-        return base64.urlsafe_b64encode(kdf.derive(password.encode()))
-
-    @staticmethod
-    def encrypt(data: bytes, password: str) -> bytes:
-        # Генерируем уникальную соль (16 байт)
-        salt = os.urandom(16)
-        key = Dsss._derive_key(password, salt)
-        f = Fernet(key)
-        # На выходе: [SALT] + [ЗАШИФРОВАННЫЕ ДАННЫЕ]
-        return salt + f.encrypt(data)
-
 
     def _gen_noise(length, seed):
         rng = np.random.default_rng(seed)
