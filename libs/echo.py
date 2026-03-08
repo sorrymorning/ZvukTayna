@@ -31,7 +31,7 @@ class EchoStego(StegoMethod):
             bytes_list.append(byte_val)
         return bytes(bytes_list)
 
-    def encode(self, cover_path, output_path,data_bytes, echo_amplitude=0.4):
+    def encode(self, cover_path, output_path,data_bytes, echo_amplitude=0.3):
         data_bytes = data_bytes.encode('utf-8')
         rate, audio = wavfile.read(cover_path)
 
@@ -56,8 +56,7 @@ class EchoStego(StegoMethod):
 
         output_audio = np.zeros_like(audio)
         
-        fade_in = np.linspace(0, 1, self.transition_len)
-        fade_out = 1 - fade_in
+
 
         for i, bit in enumerate(all_bits):
             start = i * self.segment_len
@@ -67,14 +66,12 @@ class EchoStego(StegoMethod):
 
             delay = self.delay_1 if bit == 1 else self.delay_0
 
+            echo_segment = np.zeros_like(segment)
+            echo_segment[delay:] = segment[:-delay]
 
-            padded_segment = np.concatenate([np.zeros(delay), segment])
-            echo_segment = padded_segment[:len(segment)]
+            fade = np.linspace(0, 1, len(segment))
 
-            mixed_segment = segment + echo_amplitude * echo_segment
-
-            # For this implementation, we'll just place them (might have clicks)
-            # To fix clicks: We should really process the whole signal with two filters and then mix
+            mixed_segment = segment + echo_amplitude * fade * echo_segment
 
             output_audio[start:end] = mixed_segment
 

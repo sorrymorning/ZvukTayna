@@ -32,7 +32,7 @@ def main():
     decode_parser = subparsers.add_parser("decode")
     decode_parser.add_argument("--infile", required=True)
     decode_parser.add_argument("--len", type=int, help="Required for phase method")
-    decode_parser.add_argument("--method", choices=["lsb", "phase","dsss"], required=True)
+    decode_parser.add_argument("--method", choices=["lsb", "phase","dsss","echo"], required=True)
     args = parser.parse_args()
 
     if args.command == "encode":
